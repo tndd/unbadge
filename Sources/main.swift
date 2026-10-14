@@ -59,8 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         let menu = NSMenu()
         let item = NSMenuItem()
         menu.addItem(item)
-        item.submenu = NSMenu(title: "Badge Control")
-        item.submenu?.addItem(withTitle: "Badge Control を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        item.submenu = NSMenu(title: "Unbadge")
+        item.submenu?.addItem(withTitle: "Unbadge を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let edit = NSMenuItem(title: "編集", action: nil, keyEquivalent: "")
         edit.submenu = NSMenu(title: "編集")
         for (title, selector, key) in [("切り取り", "cut:", "x"), ("コピー", "copy:", "c"), ("ペースト", "paste:", "v"), ("すべて選択", "selectAll:", "a")] {
@@ -68,11 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         }
         menu.addItem(edit)
         NSApp.mainMenu = menu
-        window.title = "Badge Control — 実験版"
+        window.title = "Unbadge — 実験版"
         window.minSize = NSSize(width: 720, height: 700)
         window.center()
         buildUI()
         do {
+            // 旧版の復元記録を引き継ぐため、保存先は名前変更後も維持する。
             let journal = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/BadgeControl/undo.plist")
             store = try BadgeStore(prefs: SystemPreferences(), journalURL: journal, permitWrites: supported)
             try reload()

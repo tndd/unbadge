@@ -2,5 +2,6 @@
 .build/
 *.app/
 *.png
+!/Resources/AppIcon.png
 *.zip
 test-results/
