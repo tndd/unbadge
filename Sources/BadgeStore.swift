@@ -79,16 +79,31 @@ final class BadgeStore {
         return n.uint64Value
     }
     func entries() throws -> [BadgeEntry] {
-        try rows().compactMap { row in
+        var result = try rows().compactMap { row -> BadgeEntry? in
             guard let id = row["bundle-id"] as? String else { return nil }
+            guard id != Self.settingsDomain else { return nil }
             return BadgeEntry(id: id, path: row["path"] as? String, enabled: try flags(row) & Self.mask != 0)
         }
+        result.append(BadgeEntry(id: Self.settingsDomain, path: "/System/Applications/System Settings.app",
+                                 enabled: try attention().values.contains { ($0 as? NSNumber)?.intValue != 0 }))
+        return result
     }
-    func hasUndo(_ id: String) -> Bool { (journal["badges"] as? [String: Bool])?[id] != nil }
+    func hasUndo(_ id: String) -> Bool {
+        id == Self.settingsDomain ? hasSettingsUndo : (journal["badges"] as? [String: Bool])?[id] != nil
+    }
     var hasSettingsUndo: Bool { journal["attention"] != nil }
 
     func setBadge(_ id: String, enabled: Bool, record: Bool = true) throws {
         try requireWrites()
+        if id == Self.settingsDomain {
+            if enabled {
+                guard hasSettingsUndo else {
+                    throw BadgeError.message("戻せるバッジ情報がありません。新しいバッジは作成しません。")
+                }
+                try restoreSettings()
+            } else { try clearSettings() }
+            return
+        }
         var list = try rows()
         let originalRows = list
         let matches = list.indices.filter { list[$0]["bundle-id"] as? String == id }
@@ -116,6 +131,7 @@ final class BadgeStore {
     }
 
     func restoreBadge(_ id: String) throws {
+        if id == Self.settingsDomain { try restoreSettings(); return }
         guard let original = (journal["badges"] as? [String: Bool])?[id] else { return }
         try setBadge(id, enabled: original, record: false)
         var next = journal

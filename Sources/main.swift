@@ -9,6 +9,14 @@ final class BackgroundStack: NSStackView {
     }
 }
 
+final class OpaqueTableHeader: NSTableHeaderView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlBackgroundColor.setFill()
+        dirtyRect.fill()
+        super.draw(dirtyRect)
+    }
+}
+
 final class ActionButton: NSButton {
     var actionBlock: (() -> Void)?
     convenience init(_ title: String, action: @escaping () -> Void) {
@@ -30,14 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
     let table = NSTableView()
     let search = NSSearchField()
     let status = NSTextField(wrappingLabelWithString: "")
-    let systemStatus = NSTextField(labelWithString: "")
     var store: BadgeStore?
     var entries: [BadgeEntry] = []
     var filtered: [BadgeEntry] = []
     var names: [String: String] = [:]
     var icons: [String: NSImage] = [:]
-    var systemRestore: ActionButton!
-    var systemClear: ActionButton!
     let supported: Bool = {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return version.majorVersion == 15 && version.minorVersion == 8 && version.patchVersion == 1
@@ -73,11 +78,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
             try reload()
             showStatus(supported ? "設定を読み込みました。切替は保存後に通知サービスを再起動して反映します。" : "このOSは未対応です。表示のみ利用できます。", error: false)
         } catch { showStatus(error.localizedDescription, error: true) }
-        updateButtons()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), CommandLine.arguments.count > i + 1 {
             let path = CommandLine.arguments[i + 1]
+            window.makeFirstResponder(nil)
+            if let row = filtered.firstIndex(where: { $0.id == BadgeStore.settingsDomain }) {
+                table.scrollRowToVisible(row)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
                 if let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     window.effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -98,43 +106,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         root.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24)
         window.contentView = root
         root.addArrangedSubview(label("バッジを、必要なものだけ。", size: 25, bold: true))
-        let note = label("macOS 15.8.1 向け実験版。通知音・バナーはそのままに、Dockの通知バッジを個別に切り替えます。独自描画のバッジには効かない場合があります。")
+        let note = label("通知設定のあるアプリのバッジを切り替えます。システム設定のオフは現在のバッジを解除する操作で、再表示される場合があります。macOS 15.8.1 向け実験版です。")
         note.textColor = .secondaryLabelColor
         root.addArrangedSubview(note)
 
-        let box = NSBox()
-        box.titlePosition = .noTitle
-        box.contentViewMargins = NSSize(width: 12, height: 12)
-        box.heightAnchor.constraint(equalToConstant: 150).isActive = true
-        let group = NSStackView()
-        group.orientation = .vertical
-        group.alignment = .leading
-        group.spacing = 8
-        group.addArrangedSubview(label("システム設定", size: 14, bold: true))
-        group.addArrangedSubview(systemStatus)
-        group.addArrangedSubview(label("現在のバッジを解除します。OSが再表示することがあります。\n解除時にDockを再起動します。アップデートの検出・インストール設定は変更しません。", size: 12))
-        systemClear = ActionButton("現在のバッジを解除") { [weak self] in self?.perform(system: true) { try self?.store?.clearSettings() } }
-        systemRestore = ActionButton("解除前に戻す") { [weak self] in self?.perform(system: true) { try self?.store?.restoreSettings() } }
-        group.addArrangedSubview(NSStackView(views: [systemClear, systemRestore]))
-        let container = NSView()
-        box.contentView = container
-        container.addSubview(group)
-        group.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            group.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            group.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            group.topAnchor.constraint(equalTo: container.topAnchor),
-            group.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor)
-        ])
-        root.addArrangedSubview(box)
-
-        search.placeholderString = "アプリ名・識別子で検索"
+        search.placeholderString = "アプリを検索"
         search.delegate = self
         root.addArrangedSubview(search)
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         table.rowHeight = 53
+        table.headerView = OpaqueTableHeader(frame: NSRect(x: 0, y: 0, width: 0, height: 26))
         table.usesAlternatingRowBackgroundColors = true
         table.dataSource = self
         table.delegate = self
@@ -160,35 +143,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         status.font = .systemFont(ofSize: 12)
         status.setContentCompressionResistancePriority(.required, for: .vertical)
         root.addArrangedSubview(status)
-        for view in [note, box, search, scroll, status] {
+        for view in [note, search, scroll, status] {
             view.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -48).isActive = true
         }
     }
     func reload() throws {
         guard let store else { return }
-        entries = try store.entries().filter { !$0.id.hasPrefix("_SYSTEM_CENTER_:") }
-        for entry in entries where names[entry.id] == nil {
-            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: entry.id) ?? entry.path.map { URL(fileURLWithPath: $0) }
-            if let url, FileManager.default.fileExists(atPath: url.path) {
-                names[entry.id] = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
-                icons[entry.id] = NSWorkspace.shared.icon(forFile: url.path)
-            } else { names[entry.id] = entry.id }
+        let apps = try store.entries().compactMap { ApplicationCatalog.resolve($0) }
+        entries = apps.map(\.entry)
+        names.removeAll()
+        icons.removeAll()
+        for app in apps {
+            names[app.entry.id] = app.name
+            icons[app.entry.id] = NSWorkspace.shared.icon(forFile: app.url.path)
         }
         entries.sort {
-            let a = icons[$0.id] != nil, b = icons[$1.id] != nil
-            if a != b { return a }
             return (names[$0.id] ?? $0.id).localizedStandardCompare(names[$1.id] ?? $1.id) == .orderedAscending
         }
-        do {
-            let active = try store.attention().values.filter { ($0 as? NSNumber)?.intValue != 0 }.count
-            systemStatus.stringValue = active > 0 ? "バッジの元になる項目：\(active)件" : "保存されたバッジ項目はありません"
-        } catch { systemStatus.stringValue = error.localizedDescription }
         filter()
-        updateButtons()
-    }
-    func updateButtons() {
-        systemClear.isEnabled = canWrite
-        systemRestore.isEnabled = canWrite && (store?.hasSettingsUndo ?? false)
     }
     func filter() {
         let query = search.stringValue
@@ -206,11 +178,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
             toggle.target = toggle
             toggle.action = #selector(BadgeSwitch.invoke)
             toggle.setAccessibilityLabel("\(names[entry.id] ?? entry.id) のバッジ")
-            toggle.actionBlock = { [weak self] enabled in self?.perform { try self?.store?.setBadge(entry.id, enabled: enabled) } }
+            if entry.id == BadgeStore.settingsDomain {
+                toggle.isEnabled = canWrite && (entry.enabled || (store?.hasUndo(entry.id) ?? false))
+                toggle.toolTip = "オフで現在のバッジを解除し、オンで解除前に戻します。再表示される場合があります。反映時にDockが再起動します。"
+            }
+            toggle.actionBlock = { [weak self] enabled in
+                self?.perform(system: entry.id == BadgeStore.settingsDomain) { try self?.store?.setBadge(entry.id, enabled: enabled) }
+            }
             return toggle
         }
         if tableColumn?.identifier.rawValue == "undo" {
-            let button = ActionButton("元に戻す") { [weak self] in self?.perform { try self?.store?.restoreBadge(entry.id) } }
+            let button = ActionButton("元に戻す") { [weak self] in
+                self?.perform(system: entry.id == BadgeStore.settingsDomain) { try self?.store?.restoreBadge(entry.id) }
+            }
             button.isEnabled = canWrite && (store?.hasUndo(entry.id) ?? false)
             return button
         }
@@ -218,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         icon.image = icons[entry.id] ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
         icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        let text = NSStackView(views: [label(names[entry.id] ?? entry.id, bold: true), label(entry.id, size: 10)])
+        let text = NSStackView(views: [label(names[entry.id] ?? entry.id, bold: true)])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 3

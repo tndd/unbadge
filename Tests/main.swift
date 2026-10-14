@@ -77,10 +77,55 @@ let restored = try reopened.attention()
 check(restored["first"] as? Int == 1, "解除した項目の復元")
 check(restored["second"] as? Int == 7 && restored["new"] as? Int == 3, "macOSが後から更新した値を保持")
 check(!reopened.hasSettingsUndo, "システム設定復元記録を終了")
+let preservedRows = p.rows
+try reopened.setBadge(BadgeStore.settingsDomain, enabled: false)
+let disabledSystem = try reopened.entries().first { $0.id == BadgeStore.settingsDomain }
+check(disabledSystem?.enabled == false, "共通一覧のシステム設定がオフになる")
+check(reopened.hasUndo(BadgeStore.settingsDomain), "共通の復元ボタンが有効になる")
+try reopened.setBadge(BadgeStore.settingsDomain, enabled: true)
+let enabledSystem = try reopened.entries().first { $0.id == BadgeStore.settingsDomain }
+check(enabledSystem?.enabled == true, "共通スイッチでシステム設定を復元")
+try reopened.setBadge(BadgeStore.settingsDomain, enabled: false)
+try reopened.restoreBadge(BadgeStore.settingsDomain)
+check(!reopened.hasUndo(BadgeStore.settingsDomain), "共通の復元操作で記録を終了")
+check(NSArray(array: p.rows).isEqual(to: preservedRows), "システム設定の共通操作で他アプリの設定を保持")
+p.domains[BadgeStore.settingsDomain]?[BadgeStore.attentionKey] = [:] as [String: Any]
+expectError("存在しないバッジは作らない") { try reopened.setBadge(BadgeStore.settingsDomain, enabled: true) }
 p.domains[BadgeStore.settingsDomain]?[BadgeStore.attentionKey] = "unexpected"
 expectError("形式不明のシステム設定") { try reopened.clearSettings() }
 p.rows = [["bundle-id": "test.app", "flags": true]]
 expectError("不正なフラグ") { _ = try reopened.entries() }
 p.rows = [["bundle-id": "test.app", "flags": 3], ["bundle-id": "test.app", "flags": 3]]
 expectError("重複ID") { try reopened.setBadge("test.app", enabled: false) }
+
+func fixture(_ relative: String, id: String, extra: [String: Any] = [:]) throws -> URL {
+    let url = root.appendingPathComponent(relative)
+    let contents = url.appendingPathComponent("Contents")
+    let executable = contents.appendingPathComponent("MacOS/Fixture")
+    try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+    var info: [String: Any] = ["CFBundleIdentifier": id, "CFBundleExecutable": "Fixture", "CFBundlePackageType": "APPL"]
+    info.merge(extra) { _, new in new }
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    return url
+}
+func resolve(_ url: URL, id: String) -> ResolvedApp? {
+    ApplicationCatalog.resolve(BadgeEntry(id: id, path: url.path, enabled: true), lookup: { _ in nil })
+}
+let ordinary = try fixture("Visible.app", id: "test.visible")
+check(resolve(ordinary, id: "test.visible") != nil, "実在する通常アプリを表示")
+let menuApp = try fixture("Menu.app", id: "test.menu", extra: ["LSUIElement": true])
+check(resolve(menuApp, id: "test.menu") != nil, "メニューバーアプリを残す")
+let xpcApp = try fixture("PasswordLike.app", id: "test.passwords", extra: ["CFBundlePackageType": "XPC!"])
+check(resolve(xpcApp, id: "test.passwords") != nil, "Passwordsと同型の実アプリを残す")
+let service = try fixture("Service.bundle", id: "test.service")
+check(resolve(service, id: "test.service") == nil, "通知サービスのbundleを除外")
+let helper = try fixture("Parent.app/Contents/Helpers/Helper.app", id: "test.helper")
+check(resolve(helper, id: "test.helper") == nil, "内部の補助アプリを除外")
+let background = try fixture("Background.app", id: "test.background", extra: ["LSBackgroundOnly": true])
+check(resolve(background, id: "test.background") == nil, "バックグラウンド専用アプリを除外")
+check(resolve(ordinary, id: "test.mismatch") == nil, "識別子が一致しない参照先を除外")
+check(resolve(root.appendingPathComponent("Missing.app"), id: "test.missing") == nil, "実体のない登録を除外")
+check(ApplicationCatalog.resolve(BadgeEntry(id: "_SYSTEM_CENTER_:test", path: ordinary.path, enabled: true), lookup: { _ in ordinary }) == nil, "内部サービス登録を除外")
 print("\(count)項目の検証に成功。実際のユーザー設定は変更していません。")
