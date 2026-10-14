@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h}"
-app="${1:-../Badge Control.app}"
+app="${1:-.build/Badge Control.app}"
 mkdir -p "$app/Contents/MacOS"
 xcrun swiftc -O -swift-version 5 Sources/BadgeStore.swift Sources/ApplicationCatalog.swift Sources/main.swift -o "$app/Contents/MacOS/BadgeControl" -framework AppKit -framework ApplicationServices
 cat > "$app/Contents/Info.plist" <<'PLIST'
