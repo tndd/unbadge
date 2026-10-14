@@ -9,7 +9,8 @@ for size in 16 32 128 256 512; do
     double=$((size * 2))
     sips -z "$double" "$double" Resources/AppIcon.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+xcrun swiftc Scripts/pack-icon.swift -o .build/pack-icon
+.build/pack-icon "$iconset" "$app/Contents/Resources/AppIcon.icns"
 xcrun swiftc -O -swift-version 5 Sources/BadgeStore.swift Sources/ApplicationCatalog.swift Sources/main.swift -o "$app/Contents/MacOS/Unbadge" -framework AppKit -framework ApplicationServices
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -21,8 +22,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>Unbadge</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.4.0</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
