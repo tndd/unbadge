@@ -48,7 +48,7 @@ Appleの公開APIには、通常アプリが他アプリすべてのDockバッ�
 
 ## ビルド・検証
 
-従来版はApple Silicon の macOS 15.8.1、Command Line Tools の Swift 6.2.4 でビルドしています。Xcodeアプリ本体や追加のパッケージは不要です。0.5.0ではGitHub ActionsのmacOS 15環境でもテストとビルドを行います。CIは実機でのバッジ描画・持続性の検証を代替しません。
+従来版はApple Silicon の macOS 15.8.1、Command Line Tools の Swift 6.2.4 でビルドしています。Xcodeアプリ本体や追加のパッケージは不要です。0.5.0はGitHub ActionsのmacOS 15.7.9・arm64環境で93項目のテストとビルド・バンドル検証が成功しています。CIは実機でのバッジ描画・持続性の検証を代替しません。
 
 ```sh
 ./test.sh
@@ -68,7 +68,7 @@ open ~/Applications/Unbadge.app
 
 テストは一時領域とメモリ内の設定を使い、ユーザーのDock・通知設定を変更しません。既存の通常アプリのフラグ操作・アプリ判定・旧版の復元に加え、通知数の再生成後のオフ維持、Dock並べ替え後の復元、対象不明・不正形式・バックアップ失敗時の中止、保存前後の競合、保存不一致、Dock再起動後の設定リセットを検証します。
 
-実機確認の結果は `VERIFICATION.md` を参照してください。
+検証結果と実機で未確認の範囲は `VERIFICATION.md` を参照してください。
 
 ## アイコンと公開内容
 
