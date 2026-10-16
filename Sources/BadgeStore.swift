@@ -103,11 +103,13 @@ final class BadgeStore {
     }
     var hasSettingsUndo: Bool { journal["attention"] != nil || journal[Self.dockUndoKey] != nil }
 
-    func setBadge(_ id: String, enabled: Bool, record: Bool = true) throws {
+    // システム設定では再起動後の照合用に要求値を返す。通常アプリはnil。
+    @discardableResult
+    func setBadge(_ id: String, enabled: Bool, record: Bool = true) throws -> Bool? {
         try requireWrites()
         if id == Self.settingsDomain {
             try setSettingsDockBadge(enabled)
-            return
+            return enabled
         }
         var list = try rows()
         let originalRows = list
@@ -116,7 +118,7 @@ final class BadgeStore {
             throw BadgeError.message("対象アプリの設定を一意に特定できません。再読み込みしてください。")
         }
         let original = try flags(list[index])
-        guard (original & Self.mask != 0) != enabled else { return }
+        guard (original & Self.mask != 0) != enabled else { return nil }
         if record {
             var next = journal
             var badges = next["badges"] as? [String: Bool] ?? [:]
@@ -133,22 +135,26 @@ final class BadgeStore {
               NSArray(array: readBack).isEqual(to: list) else {
             throw BadgeError.message("保存結果が一致しません。設定が同時に更新された可能性があります。復元記録は保持しています。")
         }
+        return nil
     }
 
-    func restoreBadge(_ id: String) throws {
+    // 復元記録を削除した後も、Dockの照合には元の値を使う。
+    @discardableResult
+    func restoreBadge(_ id: String) throws -> Bool? {
         if id == Self.settingsDomain {
-            try restoreSettingsDockBadge()
+            let expected = try restoreSettingsDockBadge()
             // 旧版の「現在のバッジを解除」の復元記録も引き続き利用できる。
             try restoreSettings()
-            return
+            return expected
         }
-        guard let original = (journal["badges"] as? [String: Bool])?[id] else { return }
+        guard let original = (journal["badges"] as? [String: Bool])?[id] else { return nil }
         try setBadge(id, enabled: original, record: false)
         var next = journal
         var badges = next["badges"] as? [String: Bool] ?? [:]
         badges.removeValue(forKey: id)
         next["badges"] = badges
         try saveJournal(next)
+        return nil
     }
 
     private func settingsDockTile() throws -> SettingsDockTile {
@@ -182,14 +188,15 @@ final class BadgeStore {
         }
         try writeSettingsDockBadge(enabled, tile: tile)
     }
-    private func restoreSettingsDockBadge() throws {
-        guard let saved = try settingsDockUndo() else { return }
+    private func restoreSettingsDockBadge() throws -> Bool? {
+        guard let saved = try settingsDockUndo() else { return nil }
         try requireWrites()
         let tile = try settingsDockTile()
         if tile.enabled != saved { try writeSettingsDockBadge(saved, tile: tile) }
         var next = journal
         next.removeValue(forKey: Self.dockUndoKey)
         try saveJournal(next)
+        return saved
     }
     func verifySettingsDockBadge(_ enabled: Bool) throws {
         guard try settingsDockTile().enabled == enabled else {

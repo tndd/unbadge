@@ -213,21 +213,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         return rowView
     }
     func restart(_ name: String) throws {
+        let oldDockPIDs = Set(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").map(\.processIdentifier))
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        process.arguments = ["-u", NSUserName(), name]
+        // Dockの終了処理による古い設定の書き戻しを避ける。
+        process.arguments = ["-u", NSUserName()] + (name == "Dock" ? ["-KILL"] : []) + [name]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw BadgeError.message("設定は保存しましたが、\(name) を再起動できません。ログアウト後に反映を確認してください。") }
+        if name == "Dock" {
+            let deadline = ProcessInfo.processInfo.systemUptime + 10
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                let launched = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").contains {
+                    !oldDockPIDs.contains($0.processIdentifier) && !$0.isTerminated && $0.isFinishedLaunching
+                }
+                if launched { return }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            throw BadgeError.message("設定は保存しましたが、Dockの起動完了を確認できません。再読み込みして反映を確認してください。")
+        }
     }
-    func perform(system: Bool = false, _ operation: () throws -> Void) {
+    func perform(system: Bool = false, _ operation: () throws -> Bool?) {
         do {
-            try operation()
-            let expected = system ? store?.settingsEntry() : nil
+            // 読み直した値を期待値にすると、操作直後の設定リセットを成功と誤認する。
+            let expected = try operation()
             try restart(system ? "Dock" : "usernoted")
-            if let expected, expected.disabledReason == nil { try store?.verifySettingsDockBadge(expected.enabled) }
+            if system, let expected { try store?.verifySettingsDockBadge(expected) }
             try reload()
             showStatus("設定の保存と\(system ? "Dock" : "通知サービス")の再起動が完了しました。実際のバッジ表示を確認してください。", error: false)
         } catch {

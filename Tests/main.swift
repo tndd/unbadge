@@ -236,6 +236,22 @@ latePrefs.afterWrite = { domain, _ in
 expectError("Dock保存直後の同時更新") { try lateStore.setBadge(BadgeStore.settingsDomain, enabled: false) }
 check(lateStore.hasSettingsUndo, "保存直後の競合でも復元記録を保持")
 
+let (resetPrefs, resetStore, _) = try dockFixture("requested-state")
+let requestedOff = try resetStore.setBadge(BadgeStore.settingsDomain, enabled: false)
+check(requestedOff == false, "再起動後の照合には操作で要求したオフを返す")
+resetPrefs.dockRows = [dockTile()]
+expectError("保存後のリセットを読み直したオンで成功扱いにしない") {
+    try resetStore.verifySettingsDockBadge(requestedOff!)
+}
+let requestedRestore = try resetStore.restoreBadge(BadgeStore.settingsDomain)
+check(requestedRestore == true, "復元記録を消した後も照合用の元の値を返す")
+resetPrefs.dockRows = [dockTile(enabled: false)]
+expectError("復元後のリセットも操作の期待値で検出") {
+    try resetStore.verifySettingsDockBadge(requestedRestore!)
+}
+check(try resetStore.setBadge(BadgeStore.settingsDomain, enabled: false) == false,
+      "すでにオフでも照合する要求値を返す")
+
 let (corruptPrefs, _, corruptURL) = try dockFixture("corrupt-journal")
 try PropertyListSerialization.data(fromPropertyList: ["settingsDock": "unexpected"], format: .xml, options: 0).write(to: corruptURL)
 let corruptStore = try BadgeStore(prefs: corruptPrefs, journalURL: corruptURL, permitWrites: true)
