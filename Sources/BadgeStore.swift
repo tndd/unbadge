@@ -33,12 +33,14 @@ struct BadgeEntry {
     let id: String
     let path: String?
     let enabled: Bool
+    var disabledReason: String? = nil
 }
 
 final class BadgeStore {
     static let notificationDomain = "com.apple.ncprefs"
     static let settingsDomain = "com.apple.systempreferences"
     static let attentionKey = "AttentionPrefBundleIDs"
+    private static let dockUndoKey = "settingsDock"
     private let prefs: Preferences
     private let journalURL: URL
     private let permitWrites: Bool
@@ -84,24 +86,27 @@ final class BadgeStore {
             guard id != Self.settingsDomain else { return nil }
             return BadgeEntry(id: id, path: row["path"] as? String, enabled: try flags(row) & Self.mask != 0)
         }
-        result.append(BadgeEntry(id: Self.settingsDomain, path: "/System/Applications/System Settings.app",
-                                 enabled: try attention().values.contains { ($0 as? NSNumber)?.intValue != 0 }))
+        result.append(settingsEntry())
         return result
+    }
+    func settingsEntry() -> BadgeEntry {
+        do {
+            return BadgeEntry(id: Self.settingsDomain, path: "/System/Applications/System Settings.app",
+                              enabled: try settingsDockTile().enabled)
+        } catch {
+            return BadgeEntry(id: Self.settingsDomain, path: "/System/Applications/System Settings.app",
+                              enabled: true, disabledReason: error.localizedDescription)
+        }
     }
     func hasUndo(_ id: String) -> Bool {
         id == Self.settingsDomain ? hasSettingsUndo : (journal["badges"] as? [String: Bool])?[id] != nil
     }
-    var hasSettingsUndo: Bool { journal["attention"] != nil }
+    var hasSettingsUndo: Bool { journal["attention"] != nil || journal[Self.dockUndoKey] != nil }
 
     func setBadge(_ id: String, enabled: Bool, record: Bool = true) throws {
         try requireWrites()
         if id == Self.settingsDomain {
-            if enabled {
-                guard hasSettingsUndo else {
-                    throw BadgeError.message("戻せるバッジ情報がありません。新しいバッジは作成しません。")
-                }
-                try restoreSettings()
-            } else { try clearSettings() }
+            try setSettingsDockBadge(enabled)
             return
         }
         var list = try rows()
@@ -131,7 +136,12 @@ final class BadgeStore {
     }
 
     func restoreBadge(_ id: String) throws {
-        if id == Self.settingsDomain { try restoreSettings(); return }
+        if id == Self.settingsDomain {
+            try restoreSettingsDockBadge()
+            // 旧版の「現在のバッジを解除」の復元記録も引き続き利用できる。
+            try restoreSettings()
+            return
+        }
         guard let original = (journal["badges"] as? [String: Bool])?[id] else { return }
         try setBadge(id, enabled: original, record: false)
         var next = journal
@@ -139,6 +149,52 @@ final class BadgeStore {
         badges.removeValue(forKey: id)
         next["badges"] = badges
         try saveJournal(next)
+    }
+
+    private func settingsDockTile() throws -> SettingsDockTile {
+        try SettingsDockTile(prefs.read(SettingsDockTile.domain, SettingsDockTile.key))
+    }
+    private func settingsDockUndo() throws -> Bool? {
+        guard let value = journal[Self.dockUndoKey] else { return nil }
+        guard let enabled = SettingsDockTile.badgeValue(value) else {
+            throw BadgeError.message("Dockの復元記録を読み取れません。記録を保護するため変更を中止しました。")
+        }
+        return enabled
+    }
+    private func writeSettingsDockBadge(_ enabled: Bool, tile: SettingsDockTile) throws {
+        let updated = tile.settingBadge(enabled)
+        guard NSArray(array: try settingsDockTile().rows).isEqual(to: tile.rows) else {
+            throw BadgeError.message("Dockの設定が別の処理で変わりました。再読み込みしてからやり直してください。")
+        }
+        try prefs.write(SettingsDockTile.domain, SettingsDockTile.key, updated)
+        guard NSArray(array: try settingsDockTile().rows).isEqual(to: updated) else {
+            throw BadgeError.message("Dockの保存結果が一致しません。復元記録は保持しています。")
+        }
+    }
+    private func setSettingsDockBadge(_ enabled: Bool) throws {
+        let tile = try settingsDockTile()
+        let saved = try settingsDockUndo()
+        guard tile.enabled != enabled else { return }
+        if saved == nil {
+            var next = journal
+            next[Self.dockUndoKey] = tile.enabled
+            try saveJournal(next)
+        }
+        try writeSettingsDockBadge(enabled, tile: tile)
+    }
+    private func restoreSettingsDockBadge() throws {
+        guard let saved = try settingsDockUndo() else { return }
+        try requireWrites()
+        let tile = try settingsDockTile()
+        if tile.enabled != saved { try writeSettingsDockBadge(saved, tile: tile) }
+        var next = journal
+        next.removeValue(forKey: Self.dockUndoKey)
+        try saveJournal(next)
+    }
+    func verifySettingsDockBadge(_ enabled: Bool) throws {
+        guard try settingsDockTile().enabled == enabled else {
+            throw BadgeError.message("Dock再起動後にバッジの設定が変わりました。再読み込みして確認してください。")
+        }
     }
 
     func attention() throws -> [String: Any] {

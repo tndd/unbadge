@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         root.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24)
         window.contentView = root
         root.addArrangedSubview(label("バッジを、必要なものだけ。", size: 25, bold: true))
-        let note = label("通知設定のあるアプリのバッジを切り替えます。システム設定のオフは現在のバッジを解除する操作で、再表示される場合があります。macOS 15.8.1 向け実験版です。")
+        let note = label("通知設定のあるアプリのバッジを切り替えます。システム設定はDockに固定すると、常駐なしでバッジを継続的に非表示にできます。macOS 15.8.1 向け実験版です。")
         note.textColor = .secondaryLabelColor
         root.addArrangedSubview(note)
 
@@ -175,13 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         if tableColumn?.identifier.rawValue == "badge" {
             let toggle = BadgeSwitch()
             toggle.state = entry.enabled ? .on : .off
-            toggle.isEnabled = canWrite
+            toggle.isEnabled = canWrite && entry.disabledReason == nil
             toggle.target = toggle
             toggle.action = #selector(BadgeSwitch.invoke)
             toggle.setAccessibilityLabel("\(names[entry.id] ?? entry.id) のバッジ")
             if entry.id == BadgeStore.settingsDomain {
-                toggle.isEnabled = canWrite && (entry.enabled || (store?.hasUndo(entry.id) ?? false))
-                toggle.toolTip = "オフで現在のバッジを解除し、オンで解除前に戻します。再表示される場合があります。反映時にDockが再起動します。"
+                toggle.toolTip = entry.disabledReason ?? "オフでDockのバッジを継続的に非表示にし、オンで表示を許可します。常駐は不要です。OS更新やDockへの追加し直しで設定が戻る場合があります。反映時にDockを再起動します。"
             }
             toggle.actionBlock = { [weak self] enabled in
                 self?.perform(system: entry.id == BadgeStore.settingsDomain) { try self?.store?.setBadge(entry.id, enabled: enabled) }
@@ -200,6 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
         icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 30).isActive = true
         let text = NSStackView(views: [label(names[entry.id] ?? entry.id, bold: true)])
+        if entry.id == BadgeStore.settingsDomain {
+            let detail = label(entry.disabledReason ?? (entry.enabled ? "バッジ表示を許可" : "継続非表示・常駐なし"), size: 11)
+            detail.textColor = .secondaryLabelColor
+            text.addArrangedSubview(detail)
+        }
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 3
@@ -221,8 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSSearchFieldDelegate,
     func perform(system: Bool = false, _ operation: () throws -> Void) {
         do {
             try operation()
-            try reload()
+            let expected = system ? store?.settingsEntry() : nil
             try restart(system ? "Dock" : "usernoted")
+            if let expected, expected.disabledReason == nil { try store?.verifySettingsDockBadge(expected.enabled) }
+            try reload()
             showStatus("設定の保存と\(system ? "Dock" : "通知サービス")の再起動が完了しました。実際のバッジ表示を確認してください。", error: false)
         } catch {
             try? reload()
