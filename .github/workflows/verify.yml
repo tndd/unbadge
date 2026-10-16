@@ -1,0 +1,20 @@
+name: Verify macOS app
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test preferences and restoration with fixtures
+        run: ./test.sh
+      - name: Build and test app bundle replacement
+        run: ./Tests/build.sh

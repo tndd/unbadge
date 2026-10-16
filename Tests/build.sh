@@ -9,7 +9,7 @@ target="$testdir/Unbadge Test.app"
 ./build.sh "$target"
 icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$target/Contents/Info.plist")
 [[ "$icon" == Unbadge-*.icns && -f "$target/Contents/Resources/$icon" ]]
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")" == 0.4.1 ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")" == 0.5.0 ]]
 
 # 旧バンドルの残骸が再ビルドで引き継がれないこと。
 touch "$target/Contents/Resources/OldIcon.icns" "$target/Contents/MacOS/OldExecutable"
